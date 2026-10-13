@@ -73,7 +73,7 @@ pub fn dialog_frame(p: &Palette, dark: bool) -> Frame {
         })
 }
 
-fn button_metrics(size: ButtonSize) -> (f32, f32, f32) {
+const fn button_metrics(size: ButtonSize) -> (f32, f32, f32) {
     match size {
         ButtonSize::Medium => (FIELD_H, 14.0, 16.0),
         ButtonSize::Small => (32.0, 13.0, 12.0),
@@ -170,6 +170,15 @@ pub fn button(
     response.on_hover_cursor(CursorIcon::PointingHand)
 }
 
+struct FieldEditor<'a> {
+    text: &'a mut String,
+    hint: &'a str,
+    id: Option<Id>,
+    limit: Option<usize>,
+    multiline: bool,
+    height: f32,
+}
+
 pub fn text_field(
     ui: &mut Ui,
     p: &Palette,
@@ -178,7 +187,18 @@ pub fn text_field(
     id: Option<Id>,
     limit: Option<usize>,
 ) -> Response {
-    field_editor(ui, p, text, hint, id, limit, false, FIELD_H)
+    field_editor(
+        ui,
+        p,
+        FieldEditor {
+            text,
+            hint,
+            id,
+            limit,
+            multiline: false,
+            height: FIELD_H,
+        },
+    )
 }
 
 pub fn text_area(
@@ -189,20 +209,30 @@ pub fn text_area(
     limit: Option<usize>,
     height: f32,
 ) -> Response {
-    field_editor(ui, p, text, hint, None, limit, true, height)
+    field_editor(
+        ui,
+        p,
+        FieldEditor {
+            text,
+            hint,
+            id: None,
+            limit,
+            multiline: true,
+            height,
+        },
+    )
 }
 
-fn field_editor(
-    ui: &mut Ui,
-    p: &Palette,
-    text: &mut String,
-    hint: &str,
-    id: Option<Id>,
-    limit: Option<usize>,
-    multiline: bool,
-    height: f32,
-) -> Response {
-    let font = FontId::new(14.0, eframe::egui::FontFamily::Proportional);
+fn field_editor(ui: &mut Ui, p: &Palette, field: FieldEditor<'_>) -> Response {
+    let FieldEditor {
+        text,
+        hint,
+        id,
+        limit,
+        multiline,
+        height,
+    } = field;
+    let font = font_body(14.0);
     let mut editor = if multiline {
         TextEdit::multiline(text)
             .desired_rows(4)

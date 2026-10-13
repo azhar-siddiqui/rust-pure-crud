@@ -108,7 +108,7 @@ pub fn font_semi(size: f32) -> FontId {
     FontId::new(size, FontFamily::Name("semibold".into()))
 }
 
-pub fn font_body(size: f32) -> FontId {
+pub const fn font_body(size: f32) -> FontId {
     FontId::new(size, FontFamily::Proportional)
 }
 
