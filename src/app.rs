@@ -1,3 +1,5 @@
+use std::time::{Duration, Instant};
+
 use crate::{
     models::Item,
     storage, theme,
@@ -11,6 +13,9 @@ use eframe::egui::{
     Stroke, TextWrapMode, Vec2,
 };
 
+const SUCCESS_TOAST: Duration = Duration::from_secs(4);
+const ERROR_TOAST: Duration = Duration::from_secs(5);
+
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Page {
     Dashboard,
@@ -22,6 +27,11 @@ enum Page {
 struct Notice {
     kind: BannerKind,
     text: String,
+    born: Instant,
+    /// `None` stays on the page until dismissed. Action feedback uses a few seconds.
+    duration: Option<Duration>,
+    /// Elapsed time captured while the pointer rests on the toast, so the timer pauses.
+    frozen: Option<Duration>,
 }
 
 struct Columns {
@@ -56,10 +66,10 @@ impl CrudApp {
             Ok(items) => (items, None),
             Err(error) => (
                 Vec::new(),
-                Some(Notice {
-                    kind: BannerKind::Error,
-                    text: format!("Could not load saved records: {error}"),
-                }),
+                Some(Notice::persistent(
+                    BannerKind::Error,
+                    format!("Could not load saved records: {error}"),
+                )),
             ),
         };
 
@@ -90,10 +100,11 @@ impl CrudApp {
     }
 
     fn notify(&mut self, kind: BannerKind, text: impl Into<String>) {
-        self.notice = Some(Notice {
-            kind,
-            text: text.into(),
-        });
+        let duration = match kind {
+            BannerKind::Success => SUCCESS_TOAST,
+            BannerKind::Error => ERROR_TOAST,
+        };
+        self.notice = Some(Notice::toast(kind, text, duration));
     }
 
     fn persist(&mut self, success_message: &str) {
@@ -1378,7 +1389,11 @@ impl eframe::App for CrudApp {
                     .show(ui, |ui| {
                         ui.spacing_mut().item_spacing = Vec2::ZERO;
                         ui.set_width(ui.available_width());
-                        if let Some(notice) = self.notice.clone() {
+                        if let Some(notice) = self
+                            .notice
+                            .clone()
+                            .filter(|notice| notice.duration.is_none())
+                        {
                             if widgets::notice_banner(ui, &p, notice.kind, &notice.text) {
                                 self.notice = None;
                             }
@@ -1394,7 +1409,116 @@ impl eframe::App for CrudApp {
             });
 
         self.modals(ctx);
+        self.show_toast(ctx);
     }
+}
+
+impl Notice {
+    fn persistent(kind: BannerKind, text: impl Into<String>) -> Self {
+        Self {
+            kind,
+            text: text.into(),
+            born: Instant::now(),
+            duration: None,
+            frozen: None,
+        }
+    }
+
+    fn toast(kind: BannerKind, text: impl Into<String>, duration: Duration) -> Self {
+        Self {
+            kind,
+            text: text.into(),
+            born: Instant::now(),
+            duration: Some(duration),
+            frozen: None,
+        }
+    }
+}
+
+impl CrudApp {
+    fn show_toast(&mut self, ctx: &egui::Context) {
+        let Some(snapshot) = self
+            .notice
+            .clone()
+            .filter(|notice| notice.duration.is_some())
+        else {
+            return;
+        };
+
+        let elapsed = snapshot.frozen.unwrap_or_else(|| snapshot.born.elapsed());
+        let age = elapsed.as_secs_f32();
+        let limit = snapshot.duration.map(|duration| duration.as_secs_f32());
+
+        if snapshot.frozen.is_none() {
+            let keep_animating = limit.is_none_or(|limit| age < limit);
+            if keep_animating {
+                ctx.request_repaint_after(Duration::from_millis(16));
+            }
+        }
+
+        let (opacity, slide) = if snapshot.frozen.is_some() {
+            (1.0, 0.0)
+        } else {
+            toast_motion(age, limit)
+        };
+
+        let hit = widgets::toast(
+            ctx,
+            &theme::palette(self.dark),
+            self.dark,
+            snapshot.kind,
+            &snapshot.text,
+            opacity,
+            slide,
+        );
+
+        if hit.dismiss {
+            self.notice = None;
+            return;
+        }
+
+        let expired = {
+            let Some(notice) = &mut self.notice else {
+                return;
+            };
+            if hit.hovered {
+                if notice.frozen.is_none() {
+                    notice.frozen = Some(notice.born.elapsed());
+                }
+            } else if let Some(frozen) = notice.frozen.take() {
+                notice.born = Instant::now() - frozen;
+            }
+            notice.duration.is_some_and(|duration| {
+                notice.frozen.unwrap_or_else(|| notice.born.elapsed()) >= duration
+            })
+        };
+
+        if expired {
+            self.notice = None;
+        }
+    }
+}
+
+fn toast_motion(age: f32, limit: Option<f32>) -> (f32, f32) {
+    let enter = smoothstep((age / 0.22).clamp(0.0, 1.0));
+    let exit = match limit {
+        Some(limit) => {
+            let start = (limit - 0.28).max(0.0);
+            if age <= start {
+                0.0
+            } else {
+                smoothstep(((age - start) / (limit - start).max(0.05)).clamp(0.0, 1.0))
+            }
+        }
+        None => 0.0,
+    };
+    let opacity = enter * (1.0 - exit);
+    let slide = (1.0 - enter) * 18.0 + exit * 14.0;
+    (opacity, slide)
+}
+
+fn smoothstep(t: f32) -> f32 {
+    t * t * (3.0 - 2.0 * t)
 }
 
 fn brand_mark(ui: &mut egui::Ui, p: &theme::Palette) {

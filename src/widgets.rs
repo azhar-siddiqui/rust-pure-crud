@@ -359,6 +359,162 @@ pub fn progress_bar(ui: &mut Ui, p: &Palette, value: f32) {
     }
 }
 
+pub struct ToastHit {
+    pub dismiss: bool,
+    pub hovered: bool,
+}
+
+/// Floating confirmation, anchored to the bottom-right like a Sonner toast.
+pub fn toast(
+    ctx: &Context,
+    p: &Palette,
+    dark: bool,
+    kind: BannerKind,
+    text: &str,
+    opacity: f32,
+    slide: f32,
+) -> ToastHit {
+    let mut dismiss = false;
+    let outer_w = (ctx.screen_rect().width() - 40.0).clamp(220.0, 356.0);
+    let content_w = (outer_w - 32.0).max(160.0);
+    let icon = 18.0_f32;
+    let close = 22.0_f32;
+    let gap = 12.0_f32;
+    let accent = match kind {
+        BannerKind::Success => p.success,
+        BannerKind::Error => p.danger,
+    };
+
+    let response = eframe::egui::Area::new(Id::new("action-toast"))
+        .order(Order::Tooltip)
+        .anchor(Align2::RIGHT_BOTTOM, Vec2::new(-24.0, -24.0 + slide))
+        .constrain(false)
+        .movable(false)
+        .interactable(true)
+        .fade_in(false)
+        .sense(Sense::hover())
+        .show(ctx, |ui| {
+            ui.set_opacity(opacity.clamp(0.0, 1.0));
+            Frame::none()
+                .fill(p.surface)
+                .stroke(Stroke::new(1.0_f32, p.border))
+                .rounding(Rounding::same(CARD_RADIUS))
+                .inner_margin(Margin::symmetric(16.0, 14.0))
+                .shadow(Shadow {
+                    offset: Vec2::new(0.0, 8.0),
+                    blur: 28.0,
+                    spread: 0.0,
+                    color: Color32::from_black_alpha(if dark { 150 } else { 36 }),
+                })
+                .show(ui, |ui| {
+                    ui.spacing_mut().item_spacing = Vec2::ZERO;
+                    let text_w = (content_w - icon - close - gap * 2.0).max(80.0);
+                    let galley = ui.fonts(|fonts| {
+                        fonts.layout_job(LayoutJob::simple(
+                            text.to_owned(),
+                            font_semi(14.0),
+                            p.text,
+                            text_w,
+                        ))
+                    });
+                    let row_h = galley.size().y.max(close);
+                    let (rect, _) =
+                        ui.allocate_exact_size(Vec2::new(content_w, row_h), Sense::hover());
+
+                    paint_status_icon(
+                        ui.painter(),
+                        Pos2::new(rect.left() + icon * 0.5, rect.center().y),
+                        kind,
+                        accent,
+                    );
+                    ui.painter().galley(
+                        Pos2::new(
+                            rect.left() + icon + gap,
+                            rect.center().y - galley.size().y * 0.5,
+                        ),
+                        galley,
+                        p.text,
+                    );
+
+                    let close_rect = Rect::from_center_size(
+                        Pos2::new(rect.right() - close * 0.5, rect.center().y),
+                        Vec2::splat(close),
+                    );
+                    let close_response =
+                        ui.interact(close_rect, Id::new("toast-close"), Sense::click());
+                    if close_response.hovered() {
+                        ui.painter()
+                            .rect_filled(close_rect, Rounding::same(6.0), p.hover_tint);
+                    }
+                    paint_close_icon(
+                        ui.painter(),
+                        close_rect.center(),
+                        if close_response.hovered() {
+                            p.text
+                        } else {
+                            p.muted
+                        },
+                    );
+                    if close_response.clicked() {
+                        dismiss = true;
+                    }
+                    close_response.on_hover_cursor(CursorIcon::PointingHand);
+                });
+        });
+
+    let toast_rect = response.response.rect;
+    let toast_layer = response.response.layer_id;
+    let hovered = ctx
+        .pointer_hover_pos()
+        .is_some_and(|pos| toast_rect.contains(pos) && ctx.layer_id_at(pos) == Some(toast_layer));
+
+    ToastHit { dismiss, hovered }
+}
+
+fn paint_status_icon(
+    painter: &eframe::egui::Painter,
+    center: Pos2,
+    kind: BannerKind,
+    color: Color32,
+) {
+    painter.circle_stroke(center, 8.0, Stroke::new(1.5_f32, color));
+    let mark = Stroke::new(1.6_f32, color);
+    match kind {
+        BannerKind::Success => {
+            painter.line_segment(
+                [center + Vec2::new(-3.4, 0.4), center + Vec2::new(-1.1, 2.8)],
+                mark,
+            );
+            painter.line_segment(
+                [center + Vec2::new(-1.1, 2.8), center + Vec2::new(3.8, -2.8)],
+                mark,
+            );
+        }
+        BannerKind::Error => {
+            painter.line_segment(
+                [center + Vec2::new(-3.0, -3.0), center + Vec2::new(3.0, 3.0)],
+                mark,
+            );
+            painter.line_segment(
+                [center + Vec2::new(3.0, -3.0), center + Vec2::new(-3.0, 3.0)],
+                mark,
+            );
+        }
+    }
+}
+
+fn paint_close_icon(painter: &eframe::egui::Painter, center: Pos2, color: Color32) {
+    let mark = Stroke::new(1.4_f32, color);
+    painter.line_segment(
+        [center + Vec2::new(-3.5, -3.5), center + Vec2::new(3.5, 3.5)],
+        mark,
+    );
+    painter.line_segment(
+        [center + Vec2::new(3.5, -3.5), center + Vec2::new(-3.5, 3.5)],
+        mark,
+    );
+}
+
 pub fn notice_banner(ui: &mut Ui, p: &Palette, kind: BannerKind, text: &str) -> bool {
     let (fill, fg, border) = match kind {
         BannerKind::Success => (p.success_soft, p.success, p.success),
