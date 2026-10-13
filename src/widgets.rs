@@ -836,8 +836,10 @@ pub fn responsive_grid(
 pub fn backdrop(ctx: &Context, overlay: Color32) -> bool {
     let screen = ctx.screen_rect();
     let mut clicked = false;
+    // Must stay below the Foreground dialogs. The same Order lets egui's
+    // stable sort paint this scrim over a dialog opened earlier.
     eframe::egui::Area::new(Id::new("modal-backdrop"))
-        .order(Order::Foreground)
+        .order(Order::Middle)
         .movable(false)
         .interactable(true)
         .fixed_pos(screen.min)
@@ -948,4 +950,53 @@ pub fn empty_mark(ui: &mut Ui, p: &Palette) {
 pub fn dot(ui: &mut Ui, color: Color32) {
     let (rect, _) = ui.allocate_exact_size(Vec2::splat(8.0), Sense::hover());
     ui.painter().circle_filled(rect.center(), 4.0, color);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use eframe::egui::{Context, LayerId, RawInput, Window};
+
+    fn frame_input(time: f64) -> RawInput {
+        let mut input = RawInput::default();
+        input.screen_rect = Some(Rect::from_min_size(Pos2::ZERO, Vec2::new(900.0, 700.0)));
+        input.time = Some(time);
+        input
+    }
+
+    fn show_dialog(ctx: &Context, title: &str) {
+        let _ = backdrop(ctx, Color32::from_black_alpha(160));
+        Window::new(title)
+            .title_bar(false)
+            .collapsible(false)
+            .resizable(false)
+            .anchor(Align2::CENTER_CENTER, Vec2::ZERO)
+            .pivot(Align2::CENTER_CENTER)
+            .order(Order::Foreground)
+            .show(ctx, |ui| {
+                ui.set_min_size(Vec2::new(320.0, 180.0));
+                ui.label(title);
+            });
+    }
+
+    #[test]
+    fn dialog_stays_above_backdrop_after_another_dialog() {
+        let ctx = Context::default();
+        let center = Pos2::new(450.0, 350.0);
+        let form = LayerId::new(Order::Foreground, Id::new("record-form"));
+
+        // Open the form, close it, open delete, close it, then open the form again.
+        // Closing matters: a scrim that shares the dialogs' Order is sent to the
+        // front when it reappears, and a stable sort then leaves it there.
+        let _ = ctx.run(frame_input(0.0), |ctx| show_dialog(ctx, "record-form"));
+        let _ = ctx.run(frame_input(0.1), |_| {});
+        let _ = ctx.run(frame_input(0.2), |ctx| show_dialog(ctx, "delete-record"));
+        let _ = ctx.run(frame_input(0.3), |_| {});
+        let _ = ctx.run(frame_input(0.4), |ctx| show_dialog(ctx, "record-form"));
+
+        // egui applies layer order at the end of the frame.
+        let _ = ctx.run(frame_input(0.5), |ctx| {
+            assert_eq!(ctx.layer_id_at(center), Some(form));
+        });
+    }
 }
